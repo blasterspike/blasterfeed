@@ -1,0 +1,56 @@
+{
+    "feed_title": "Unit Test Feed",
+    "feed_link": "https://example.com/",
+    "feed_description": "Unit Test Feed Description",
+    "feed_entries":
+        [
+            {
+                "link": "https://www.w3schools.com/xml/xml_rss.asp",
+                "links": [
+                    {
+                        "href": "https://www.w3schools.com/xml/xml_rss.asp",
+                        "rel": "alternate",
+                        "type": "text/html"
+                    }
+                ],
+                "summary": "New RSS tutorial on W3Schools",
+                "summary_detail": {
+                    "base": "",
+                    "language": null,
+                    "type": "text/html",
+                    "value": "New RSS tutorial on W3Schools"
+                },
+                "title": "RSS Tutorial",
+                "title_detail": {
+                    "base": "",
+                    "language": null,
+                    "type": "text/plain",
+                    "value": "RSS Tutorial"
+                }
+            },
+            {
+                "link": "https://www.w3schools.com/xml",
+                "links": [
+                    {
+                        "href": "https://www.w3schools.com/xml",
+                        "rel": "alternate",
+                        "type": "text/html"
+                    }
+                ],
+                "summary": "New XML tutorial on W3Schools",
+                "summary_detail": {
+                    "base": "",
+                    "language": null,
+                    "type": "text/html",
+                    "value": "New XML tutorial on W3Schools"
+                },
+                "title": "XML Tutorial",
+                "title_detail": {
+                    "base": "",
+                    "language": null,
+                    "type": "text/plain",
+                    "value": "XML Tutorial"
+                }
+            }
+        ]
+}

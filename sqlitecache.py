@@ -1,18 +1,16 @@
 #!/usr/bin/env python
 
 import sqlite3
-import time
+import os
 
 
-class SQliteCacheHandler():
-    def __init__(self, logger, thread_id):
+class SQliteCacheHandler:
+    def __init__(self, logger):
         self.logger = logger
-        self.thread_id = thread_id
-        # self.conn = sqlite3.connect('blasterfeed-cache.db', check_same_thread=False)
-        self.conn = sqlite3.connect('blasterfeed-cache.db')
+        self.conn = sqlite3.connect('{0}/config/blasterfeed-cache.sqlite3'.format(os.path.dirname(__file__)))
         self.logger.debug('SQLite3 connection object: {0}'.format(self.conn))
         self.c = self.conn.cursor()
-        # Enable WAL journaling as we are using threading and we need concurrent access to the DB
+        # Enable WAL journaling
         # https://www.sqlite.org/wal.html
         self.c.execute('PRAGMA journal_mode=wal')
         self.c.execute('''CREATE TABLE IF NOT EXISTS data (ID INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -51,11 +49,11 @@ class SQliteCacheHandler():
         try:
             self.c.close()
         except sqlite3.ProgrammingError as error:
-            self.logger.error('Error closing cursor to DB. Connection object: {conn}, Thread ID: {thread_id}, '
-                              'Error: {error}'.format(conn=self.conn, thread_id=self.thread_id, error=error))
+            self.logger.error('Error closing cursor to DB. Connection object: {conn}, '
+                              'Error: {error}'.format(conn=self.conn, error=error))
 
         try:
             self.conn.close()
         except sqlite3.OperationalError as error:
-            self.logger.error('Error closing connection to DB. Connection object: {conn}, Thread ID: {thread_id}, '
-                              'Error: {error}'.format(conn=self.conn, thread_id=self.thread_id, error=error))
+            self.logger.error('Error closing connection to DB. Connection object: {conn}, '
+                              'Error: {error}'.format(conn=self.conn, error=error))

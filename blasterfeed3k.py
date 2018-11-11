@@ -2,352 +2,300 @@
 
 import argparse
 import logging
-import configparser
 import os
 import feedparser
 from feedgen.feed import FeedGenerator
 from newspaper import Article
 from sqlitecache import SQliteCacheHandler
-import threading
 import dateutil
 import datetime
-import psutil
+import yaml
+import my_timezones
+import json
 import sys
 
 
-def parse_an_item(parsed_feed, fg, tzd, sq, feed_link):
-    list_of_existing_items_links = list()
+def json_serial(obj):
+    """
+    JSON serializer for objects not serializable by default json code
+    """
 
-    # Now I need to parse all the items of the feed
-    for item in parsed_feed.entries:
-        fe = fg.add_entry()
-        item_title = fe.title(item['title'])
-        # element.encode('ascii', 'ignore') because I can get the error
-        # UnicodeEncodeError: 'ascii' codec can't encode character u'\u2019' in position 69: ordinal not in range(128)
-        logger.debug('Item title: {0}'.format(item_title.encode('ascii', 'ignore')))
-        if 'author' in item:
-            item_author = fe.author(name=item['author'])
-            logger.debug('Item author: {0}'.format(item_author))
-        if 'published' in item:
-            # Same problem of the Feed pubDate
-            if isinstance(item['published'], str):
-                converted_item_pubdate = dateutil.parser.parse(item['published'], tzinfos=tzd)
-                item_pubdate = fe.pubdate(converted_item_pubdate)
-                logger.debug('Item pubDate with timestamp: {0}'.format(item_pubdate))
-        item_link = fe.link(href=item['link'], rel='alternate')
-        logger.debug('Item link: {0}'.format(item_link))
-        # item_link[0].get('href') as we get an output in the format
-        # [{'href': u'http://feedproxy.google.com/~r/Techcrunch/~3/JIfXiMdvFWM/', 'rel': 'alternate'}]
-        list_of_existing_items_links.append(item_link[0].get('href'))
-
-        if not cache_disabled:
-            # First search if we have already stored this article in cache
-            search_result = sq.search(item_link[0].get('href'))
-            if search_result:
-                logger.debug('Article found in SQLite, grabbing the content')
-                content = search_result[4]
-
-        # If cache is disabled or the previous search_result didn't return anything, retrieve the content
-        if cache_disabled or (search_result is None):
-            # Get the full article
-            content = get_readable_content(logger, item_link[0].get('href'))
-
-            # If content is None, remove the entry so it can be grabbed later
-            if content is None:
-                logger.debug('I\'m going to remove the entry for link {0} as the content is empty'.format(
-                    item_link))
-                fg.remove_entry(fe)
-
-        # If cache is not disabled and search_result was empty and I have a content, store the content in SQLite
-        if (not cache_disabled) and (search_result is None) and (content is not None):
-            logger.debug('Storing the content in SQLite for: {0}'.format(item_link[0].get('href')))
-            sq.insert(feed_link[0].get('href'), item_link[0].get('href'), datetime.datetime.now(), content)
-
-        fe.content(content)
-
-    return fg, list_of_existing_items_links
+    if isinstance(obj, (datetime.datetime, datetime.date)):
+        return obj.isoformat()
+    raise TypeError('Type {0} not serializable'.format(type(obj)))
 
 
-def parse_the_feed(logger, section, feed, output_file, cache_disabled):
-    tzd = {'Y': -43200,
-           'NUT': -39600,
-           'SST': -39600,
-           'X': -39600,
-           'CKT': -36000,
-           'HAST': -36000,
-           'HST': -36000,
-           'TAHT': -36000,
-           'TKT': -36000,
-           'W': -36000,
-           'MART': -34200,
-           'MIT': -34200,
-           'AKST': -32400,
-           'GAMT': -32400,
-           'GIT': -32400,
-           'HADT': -32400,
-           'HNY': -32400,
-           'V': -32400,
-           'AKDT': -28800,
-           'CIST': -28800,
-           'HAY': -28800,
-           'HNP': -28800,
-           'PST': -28800,
-           'PT': -28800,
-           'U': -28800,
-           'HAP': -25200,
-           'HNR': -25200,
-           'MST': -25200,
-           'PDT': -25200,
-           'T': -25200,
-           'CST': -21600,
-           'EAST': -21600,
-           'GALT': -21600,
-           'HAR': -21600,
-           'HNC': -21600,
-           'MDT': -21600,
-           'S': -21600,
-           'CDT': -18000,
-           'COT': -18000,
-           'EASST': -18000,
-           'ECT': -18000,
-           'EST': -18000,
-           'ET': -18000,
-           'HAC': -18000,
-           'HNE': -18000,
-           'PET': -18000,
-           'R': -18000,
-           'HLV': -16200,
-           'VET': -16200,
-           'AST': -14400,
-           'BOT': -14400,
-           'CLT': -14400,
-           'COST': -14400,
-           'EDT': -14400,
-           'FKT': -14400,
-           'GYT': -14400,
-           'HAE': -14400,
-           'HNA': -14400,
-           'PYT': -14400,
-           'Q': -14400,
-           'HNT': -12600,
-           'NST': -12600,
-           'NT': -12600,
-           'ADT': -10800,
-           'ART': -10800,
-           'BRT': -10800,
-           'CLST': -10800,
-           'FKST': -10800,
-           'GFT': -10800,
-           'HAA': -10800,
-           'P': -10800,
-           'PMST': -10800,
-           'PYST': -10800,
-           'SRT': -10800,
-           'UYT': -10800,
-           'WGT': -10800,
-           'HAT': -9000,
-           'NDT': -9000,
-           'BRST': -7200,
-           'FNT': -7200,
-           'O': -7200,
-           'PMDT': -7200,
-           'UYST': -7200,
-           'WGST': -7200,
-           'AZOT': -3600,
-           'CVT': -3600,
-           'EGT': -3600,
-           'N': -3600,
-           'EGST': 0,
-           'GMT': 0,
-           'UTC': 0,
-           'WET': 0,
-           'WT': 0,
-           'Z': 0,
-           'A': 3600,
-           'CET': 3600,
-           'DFT': 3600,
-           'WAT': 3600,
-           'WEDT': 3600,
-           'WEST': 3600,
-           'B': 7200,
-           'CAT': 7200,
-           'CEDT': 7200,
-           'CEST': 7200,
-           'EET': 7200,
-           'SAST': 7200,
-           'WAST': 7200,
-           'C': 10800,
-           'EAT': 10800,
-           'EEDT': 10800,
-           'EEST': 10800,
-           'IDT': 10800,
-           'MSK': 10800,
-           'IRST': 12600,
-           'AMT': 14400,
-           'AZT': 14400,
-           'D': 14400,
-           'GET': 14400,
-           'GST': 14400,
-           'KUYT': 14400,
-           'MSD': 14400,
-           'MUT': 14400,
-           'RET': 14400,
-           'SAMT': 14400,
-           'SCT': 14400,
-           'AFT': 16200,
-           'IRDT': 16200,
-           'AMST': 18000,
-           'AQTT': 18000,
-           'AZST': 18000,
-           'E': 18000,
-           'HMT': 18000,
-           'MAWT': 18000,
-           'MVT': 18000,
-           'PKT': 18000,
-           'TFT': 18000,
-           'TJT': 18000,
-           'TMT': 18000,
-           'UZT': 18000,
-           'YEKT': 18000,
-           'SLT': 19800,
-           'NPT': 20700,
-           'ALMT': 21600,
-           'BIOT': 21600,
-           'BTT': 21600,
-           'F': 21600,
-           'IOT': 21600,
-           'KGT': 21600,
-           'NOVT': 21600,
-           'OMST': 21600,
-           'YEKST': 21600,
-           'CCT': 23400,
-           'MMT': 23400,
-           'CXT': 25200,
-           'DAVT': 25200,
-           'G': 25200,
-           'HOVT': 25200,
-           'ICT': 25200,
-           'KRAT': 25200,
-           'NOVST': 25200,
-           'OMSST': 25200,
-           'THA': 25200,
-           'WIB': 25200,
-           'ACT': 28800,
-           'AWST': 28800,
-           'BDT': 28800,
-           'BNT': 28800,
-           'CAST': 28800,
-           'H': 28800,
-           'HKT': 28800,
-           'IRKT': 28800,
-           'KRAST': 28800,
-           'MYT': 28800,
-           'PHT': 28800,
-           'SGT': 28800,
-           'ULAT': 28800,
-           'WITA': 28800,
-           'WST': 28800,
-           'AWDT': 32400,
-           'I': 32400,
-           'IRKST': 32400,
-           'JST': 32400,
-           'KST': 32400,
-           'PWT': 32400,
-           'TLT': 32400,
-           'WDT': 32400,
-           'WIT': 32400,
-           'YAKT': 32400,
-           'ACST': 34200,
-           'AEST': 36000,
-           'ChST': 36000,
-           'K': 36000,
-           'PGT': 36000,
-           'VLAT': 36000,
-           'YAKST': 36000,
-           'YAPT': 36000,
-           'ACDT': 37800,
-           'LHST': 37800,
-           'AEDT': 39600,
-           'L': 39600,
-           'LHDT': 39600,
-           'MAGT': 39600,
-           'NCT': 39600,
-           'PONT': 39600,
-           'SBT': 39600,
-           'VLAST': 39600,
-           'VUT': 39600,
-           'NFT': 41400,
-           'ANAST': 43200,
-           'ANAT': 43200,
-           'FJT': 43200,
-           'GILT': 43200,
-           'M': 43200,
-           'MAGST': 43200,
-           'MHT': 43200,
-           'NZST': 43200,
-           'PETST': 43200,
-           'PETT': 43200,
-           'TVT': 43200,
-           'WFT': 43200,
-           'FJST': 46800,
-           'NZDT': 46800 }
+def generate_new_feed(logger, website, feed, output_file):
+    """
+    Generate the new feed
 
-    # Parse the feed with feedparser
-    parsed_feed = feedparser.parse(feed)
-    # Initialize feedgen
-    fg = FeedGenerator()
-    if not cache_disabled:
-        # Initialize class SQliteCacheHandler
-        logger.debug('Thread ID: {0}'.format(threading.current_thread()))
-        sq = SQliteCacheHandler(logger, threading.current_thread())
+    :param logger: custom logger
+    :type logger: logger object
+    :param website: name of the website provided in the config.yml
+    :type website: string
+    :param feed: feed URL provided in the config.yml
+    :type feed: string
+    :param output_file: full path where to save the generated RSS feed, provided in the config.yml
+    :type output_file: string
+    """
+    new_feed_elements = parse_the_feed(logger, website, feed)
+    fg = initialize_feed(logger, new_feed_elements)
 
-    if hasattr(parsed_feed.feed, 'title'):
-        feed_title = fg.title(parsed_feed.feed.title)
-        logger.debug('Feed title: {0}'.format(feed_title))
-    else:
-        feed_title = fg.title(section)
-        logger.debug('Feed attribute title is not present, set it to section name from ini file: {0}'.format(section))
-        logger.debug('feed_title: {0}'.format(feed_title))
-    if hasattr(parsed_feed.feed, 'link'):
-        feed_link = fg.link(href=parsed_feed.feed.link, rel='alternate')
-        logger.debug('Feed link: {0}'.format(feed_link))
-    else:
-        feed_link = fg.link(href=feed, rel='alternate')
-        logger.debug('Feed attribute link is not present, set it to feed URL: {0}'.format(feed))
-    # Not all feeds have all fields
-    if hasattr(parsed_feed.feed, 'description'):
-        feed_description = fg.description(parsed_feed.feed.description)
-        # 'description' field is mandatory by FeedGenerator
-        if not feed_description:
-            feed_description = fg.description(feed_title)
-            logger.debug('Feed description is empty, set it to feed title: {0}'.format(feed_description))
+    # Create a list with all the links of the entries present in the feed
+    # It is going to be used to delete older records in the database
+    list_of_all_entries_links = list()
+
+    # Initialize class SQliteCacheHandler
+    sq = SQliteCacheHandler(logger)
+
+    # Parse all the entries of the feed
+    for entry in new_feed_elements['feed_entries']:
+        new_feed_entry = parse_an_entry(logger, entry)
+
+        list_of_all_entries_links.append(new_feed_entry['entry_link'])
+
+        # Get the full article for this entry
+        content = get_full_content_from_entry_link(logger, cache_disabled, sq, new_feed_elements['feed_link'],
+                                                   new_feed_entry['entry_link'])
+
+        if content is not None:
+            # As we have been able to get the full article, add the entry to the new feed that we are creating
+            fg = add_entry_to_new_feed(logger, fg, new_feed_entry, content)
         else:
-            logger.debug('Feed description: {0}'.format(feed_description.encode('ascii', 'ignore')))
-    else:
-        # 'description' field is mandatory by FeedGenerator
-        feed_description = fg.description(feed_title)
-        logger.debug('Feed description not found, set it to feed title: {0}'.format(feed_description))
-    if hasattr(parsed_feed.feed, 'date'):
-        # feedparser uses dateutil to parse pubDate if it's a string
-        # Unfortunately dateutil doesn't support timezones and it fails with ValueError if pubDate doesn't have one
-        # This way I provide date directly a datetime object with timestamp
-        logger.debug('Feed pubDate: {0}'.format(parsed_feed.feed.date))
-        if isinstance(parsed_feed.feed.date, str):
-            converted_feed_pubdate = dateutil.parser.parse(parsed_feed.feed.date, tzinfos=tzd)
-            feed_pubdate = fg.pubDate(converted_feed_pubdate)
-            logger.debug('Feed pubDate with timestamp: {0}'.format(feed_pubdate))
+            logger.debug('The content for the entry link {0} is empty, not adding this entry to the new feed'.
+                         format(new_feed_entry['entry_link']))
 
-    fg, list_of_existing_items_links = parse_an_item(parsed_feed, fg, tzd, sq, feed_link)
-
+    # Generate the feed file
     fg.rss_file(output_file)
     logger.debug('New feed written to: {0}'.format(output_file))
 
     if not cache_disabled:
         # Clean the DB
-        sq.clean(feed_link[0].get('href'), list_of_existing_items_links)
+        logger.debug('list_of_all_entries_links: {0}'.format(json.dumps(list_of_all_entries_links, indent=4)))
+        sq.clean(new_feed_elements['feed_link'], list_of_all_entries_links)
+
+
+def parse_the_feed(logger, website, feed):
+    """
+    Parse the retrieved feed and grab the elements needed to generate the new one
+
+    :param logger: custom logger
+    :type logger: logger object
+    :param website: name of the website provided in the config file
+    :type website: string
+    :param feed: feed URL provided in the config file
+    :type feed: string
+    :return new_feed_elements: elements of the feed that we are going to generate
+    :rtype new_feed_elements: dictionary
+    """
+
+    # Create a new dictionary where to save the elements of the feed that we are going to generate
+    new_feed_elements = dict()
+    # Create a list where to save the entries of the feed
+    entries_list = list()
+
+    # Parse the feed with feedparser
+    parsed_feed = feedparser.parse(feed)
+
+    # Set a feed title
+    if hasattr(parsed_feed.feed, 'title'):
+        new_feed_elements['feed_title'] = parsed_feed.feed.title
+        logger.debug('feed_title: {0}'.format(new_feed_elements['feed_title']))
+    else:
+        new_feed_elements['feed_title'] = website
+        logger.debug('Feed attribute title is not present, set it to website name from the config file: {0}'.format(
+            new_feed_elements['feed_title']))
+
+    # Set a feed link
+    if hasattr(parsed_feed.feed, 'link'):
+        new_feed_elements['feed_link'] = parsed_feed.feed.link
+        logger.debug('feed_link: {0}'.format(new_feed_elements['feed_link']))
+    else:
+        new_feed_elements['feed_link'] = feed
+        logger.debug('Feed attribute link is not present, set it to feed URL: {0}'.format(
+            new_feed_elements['feed_link']))
+
+    # Set a feed description
+    # Not all feeds have all fields, 'description' field is mandatory by FeedGenerator
+    if hasattr(parsed_feed.feed, 'description'):
+        # 'description' field is mandatory by FeedGenerator
+        if not parsed_feed.feed.description:
+            new_feed_elements['feed_description'] = new_feed_elements['feed_title']
+            logger.debug('Feed description is empty, set it to feed title: {0}'.format(
+                new_feed_elements['feed_description']))
+        else:
+            new_feed_elements['feed_description'] = parsed_feed.feed.description
+            logger.debug('feed_description: {0}'.format(new_feed_elements['feed_description']))
+    else:
+        new_feed_elements['feed_description'] = new_feed_elements['feed_title']
+        logger.debug('Feed description is not present, set it to feed title: {0}'.format(
+            new_feed_elements['feed_description'].encode('ascii', 'ignore')))
+
+    # Set a feed publication date
+    if hasattr(parsed_feed.feed, 'date'):
+        # feedparser uses dateutil to parse pubDate if it's a string
+        # Unfortunately dateutil doesn't support timezones and it fails with ValueError if pubDate doesn't have one
+        # This way I provide date directly a datetime object with timestamp
+        logger.debug('Feed publication date: {0}'.format(parsed_feed.feed.date))
+        converted_feed_pubdate = dateutil.parser.parse(parsed_feed.feed.date, tzinfos=my_timezones.tzd)
+        new_feed_elements['feed_pubdate'] = converted_feed_pubdate
+        logger.debug('feed_pubdate: {0}'.format(new_feed_elements['feed_pubdate']))
+
+    # Parse the entries in the feed
+    for entry in parsed_feed.entries:
+        entries_list.append(entry)
+    new_feed_elements['feed_entries'] = entries_list
+
+    return new_feed_elements
+
+
+def initialize_feed(logger, new_feed_elements):
+    """
+    Instanciate the FeedGenerator class with some data retrieved from the previous function
+
+    :param logger: custom logger
+    :type logger: logger object
+    :param new_feed_elements: elements of the new feed that we are going to generate
+    :type new_feed_elements: dictionary
+    :return fg: FeedGenerator class
+    :rtype fg: object
+    """
+    # Initialize feedgen
+    fg = FeedGenerator()
+
+    fg.title(new_feed_elements['feed_title'])
+    fg.link(href=new_feed_elements['feed_link'], rel='alternate')
+    fg.description(new_feed_elements['feed_description'])
+    if 'feed_pubdate' in new_feed_elements:
+        fg.pubDate(new_feed_elements['feed_pubdate'])
+    logger.debug('Feed initialized for {0}'.format(new_feed_elements['feed_title']))
+
+    return fg
+
+
+def parse_an_entry(logger, entry):
+    """
+    Parse an entry of the retrieved feed
+
+    :param logger: custom logger
+    :type logger: logger object
+    :param entry: feed entry of the existing feed
+    :type entry: dictionary
+    :return new_feed_entry: dictionary with some data extracted from the retrieved feed entry
+    :rtype new_feed_entry: dictionary
+    """
+
+    # Create a dictionary to save all the elements of the existing feed, need to generate the new one
+    new_feed_entry = dict()
+
+    new_feed_entry['entry_title'] = entry['title']
+    # element.encode('ascii', 'ignore') because I can get the error
+    # UnicodeEncodeError: 'ascii' codec can't encode character u'\u2019' in position 69: ordinal not in range(128)
+    logger.debug('entry_title: {0}'.format(entry['title'].encode('ascii', 'ignore')))
+
+    if 'author' in entry:
+        new_feed_entry['entry_author'] = entry['author']
+        logger.debug('entry_author: {0}'.format(entry['author']))
+
+    if 'published' in entry:
+        # Same problem of the Feed pubDate
+        converted_entry_pubdate = dateutil.parser.parse(entry['published'], tzinfos=my_timezones.tzd)
+        new_feed_entry['entry_pubdate'] = converted_entry_pubdate
+        logger.debug('entry_pubdate with timestamp: {0}'.format(converted_entry_pubdate))
+
+    new_feed_entry['entry_link'] = entry['link']
+    logger.debug('entry_link: {0}'.format(new_feed_entry['entry_link']))
+
+    logger.debug('new_feed_entry: {0}'.format(json.dumps(new_feed_entry, indent=4, default=json_serial)))
+    return new_feed_entry
+
+
+def get_full_content_from_entry_link(logger, cache_disabled, sq, feed_link, entry_link):
+    """
+    Retrieve the full content of the website page using the link in the entry feed
+
+    :param logger: custom logger
+    :type logger: logger object
+    :param cache_disabled: boolean if the cache is disabled
+    :type cache_disabled: boolean
+    :param sq: SQliteCacheHandler class
+    :type sq: SQliteCacheHandler object
+    :param feed_link: link of the retrieved feed. Used to store it into the SQLite database.
+    :type feed_link: string
+    :param entry_link: link of the entry feed
+    :type entry_link: string
+    :return content: content of the entire website page
+    :rtype content: string
+    """
+
+    search_result = None
+    content = None
+
+    if not cache_disabled:
+        # First search if we have already stored this article in cache
+        search_result = sq.search(entry_link)
+        if search_result:
+            logger.debug('Article found in SQLite, grabbing the content from the database')
+            content = search_result[4]
+
+    # If cache is disabled or the previous search_result didn't return anything, retrieve the content
+    if cache_disabled or (search_result is None):
+        # Get the full article
+        logger.debug('Article not found in SQLite, grabbing the content')
+        content = get_readable_content(logger, entry_link)
+
+    # If cache is not disabled and search_result was empty and I have a content, store the content in SQLite
+    if (not cache_disabled) and (search_result is None) and (content is not None):
+        logger.debug('Storing the content in SQLite for: {0}'.format(entry_link))
+        sq.insert(feed_link, entry_link, datetime.datetime.now(), content)
+
+    return content
+
+
+def add_entry_to_new_feed(logger, fg, entry, content):
+    """
+    Add FeedEntry to FeedGenerator
+
+    :param logger: custom logger
+    :type logger: logger object
+    :param fg: FeedGenerator class
+    :type fg: FeedGenerator object
+    :param entry: entry of the feed that we are going to generate
+    :type entry: dictionary
+    :param content: full content of the website page
+    :type content: string
+    :return fg: FeedGenerator class with the new entry
+    :rtype fg: FeedGenerator object
+    """
+    fe = fg.add_entry()
+    logger.debug('entry: {0}'.format(json.dumps(entry, indent=4, default=json_serial)))
+    fe.title(entry['entry_title'])
+
+    if 'author' in entry:
+        fe.author(name=entry['entry_author'])
+
+    if 'published' in entry:
+        fe.pubdate(entry['entry_pubdate'])
+
+    fe.link(href=entry['entry_link'], rel='alternate')
+
+    fe.content(content)
+
+    return fg
 
 
 def get_readable_content(logger, link):
+    """
+    Retrieves the full content of a website page given the link in the entry feed
+
+    :param logger: custom logger
+    :type logger: logger object
+    :param link: link in the entry feed
+    :type link: string
+    :return content: full content
+    :rtype content: string
+    """
+
     logger.debug('Fetching full article for {0}'.format(link))
 
     article_to_fetch = Article(
@@ -357,8 +305,8 @@ def get_readable_content(logger, link):
         request_timeout=20)
     try:
         article_to_fetch.download()
-    except:
-        logger.warning('Unable to download the article for link: {0}'.format(link))
+    except Exception as e:
+        logger.warning('Unable to download the article for link {0}, error: {1}'.format(link, e))
         return None
     else:
         if not article_to_fetch.html:
@@ -367,8 +315,8 @@ def get_readable_content(logger, link):
         else:
             try:
                 article_to_fetch.parse()
-            except:
-                logger.warning('Unable to parse the article for link: {0}'.format(link))
+            except Exception as e:
+                logger.warning('Unable to parse the article for link {0}, error: {1}'.format(link, e))
                 return None
             else:
                 return article_to_fetch.article_html
@@ -385,7 +333,7 @@ if __name__ == '__main__':
 
     logger = logging.getLogger('Custom logger')
     handler = logging.StreamHandler()
-    formatter = logging.Formatter('%(levelname)s %(asctime)s %(threadName)s: %(message)s')
+    formatter = logging.Formatter('%(levelname)s %(asctime)s: %(message)s')
     handler.setFormatter(formatter)
     logger.addHandler(handler)
     if debug_enabled:
@@ -393,31 +341,19 @@ if __name__ == '__main__':
     else:
         logger.setLevel(logging.WARNING)
 
-    running = False
-    if not cache_disabled:
-        # Check if another process is running. If so, quit because we don't want undesired accesses to the SQLite
-        for p in psutil.process_iter():
-            if os.path.basename(__file__) in p.name():
-                running = True
+    with open('{0}/config/config.yml'.format(os.path.dirname(__file__)), 'r') as config_file:
+        try:
+            config_data = yaml.load(config_file)
+        except yaml.YAMLError as exc:
+            logger.error('Unable to read configuration file: {0}'.format(exc))
+            sys.exit(1)
+    logger.debug('config_data: {0}'.format(config_data))
 
-        if running:
-            logger.warning('Another process is running. Quit.')
-            sys.exit(0)
-
-    config = configparser.RawConfigParser(allow_no_value=True)
-    ini_file = os.path.dirname(os.path.realpath(__file__)) + '/settings.ini'
-    logger.debug('ini file path: {0}'.format(ini_file))
-    config.read(ini_file)
-
-    threads = []
-    for section in config.sections():
-        logger.debug('Reading configuration for {0}'.format(section))
-        feed = config.get(section, 'feed')
+    for website in config_data.keys():
+        logger.debug('Reading configuration for {0}'.format(website))
+        feed = config_data[website]['feed']
         logger.debug('Feed to parse: {0}'.format(feed))
-        output_file = config.get(section, 'output_file')
+        output_file = config_data[website]['output_file']
         logger.debug('Output file: {0}'.format(output_file))
 
-        # Start thread
-        t = threading.Thread(target=parse_the_feed, args=(logger, section, feed, output_file, cache_disabled))
-        threads.append(t)
-        t.start()
+        generate_new_feed(logger, website, feed, output_file)

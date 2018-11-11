@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<rss version="2.0">
+
+<channel>
+  <title>Feed title</title>
+  <link>https://example.com/</link>
+  <description></description>
+  <lastBuildDate>Sun, 04 Nov 2018 16:00:06 +0000</lastBuildDate>
+</channel>
+
+</rss>
