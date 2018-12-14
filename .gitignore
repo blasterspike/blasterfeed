@@ -1,6 +1,6 @@
 .DS_Store
 .idea/
 __pycache__/
-blasterfeed-cache.db
-settings.ini
+blasterfeed-cache.sqlite3
+config.yml
 sqlitecache.pyc
