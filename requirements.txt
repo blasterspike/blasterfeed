@@ -2,5 +2,5 @@ configparser
 feedparser
 feedgen
 newspaper3k
-requests>=2.6.0
+requests
 psutil

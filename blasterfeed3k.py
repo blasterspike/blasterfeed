@@ -13,6 +13,7 @@ import yaml
 import my_timezones
 import json
 import sys
+import requests
 
 
 def json_serial(obj):
@@ -25,7 +26,7 @@ def json_serial(obj):
     raise TypeError('Type {0} not serializable'.format(type(obj)))
 
 
-def generate_new_feed(logger, website, feed, output_file):
+def generate_new_feed(logger, website, feed, cache_disabled, cookies, output_file):
     """
     Generate the new feed
 
@@ -35,6 +36,10 @@ def generate_new_feed(logger, website, feed, output_file):
     :type website: string
     :param feed: feed URL provided in the config.yml
     :type feed: string
+    :param cache_disabled: boolean if the cache is disabled
+    :type cache_disabled: boolean
+    :param cookies: cookies provided in the config.yml
+    :type feed: dictionary
     :param output_file: full path where to save the generated RSS feed, provided in the config.yml
     :type output_file: string
     """
@@ -46,7 +51,9 @@ def generate_new_feed(logger, website, feed, output_file):
     list_of_all_entries_links = list()
 
     # Initialize class SQliteCacheHandler
-    sq = SQliteCacheHandler(logger)
+    sq = None
+    if not cache_disabled:
+        sq = SQliteCacheHandler(logger)
 
     # Parse all the entries of the feed
     for entry in new_feed_elements['feed_entries']:
@@ -56,7 +63,7 @@ def generate_new_feed(logger, website, feed, output_file):
 
         # Get the full article for this entry
         content = get_full_content_from_entry_link(logger, cache_disabled, sq, new_feed_elements['feed_link'],
-                                                   new_feed_entry['entry_link'])
+                                                   new_feed_entry['entry_link'], cookies)
 
         if content is not None:
             # As we have been able to get the full article, add the entry to the new feed that we are creating
@@ -210,7 +217,7 @@ def parse_an_entry(logger, entry):
     return new_feed_entry
 
 
-def get_full_content_from_entry_link(logger, cache_disabled, sq, feed_link, entry_link):
+def get_full_content_from_entry_link(logger, cache_disabled, sq, feed_link, entry_link, cookies):
     """
     Retrieve the full content of the website page using the link in the entry feed
 
@@ -224,6 +231,8 @@ def get_full_content_from_entry_link(logger, cache_disabled, sq, feed_link, entr
     :type feed_link: string
     :param entry_link: link of the entry feed
     :type entry_link: string
+    :param cookies: cookies to use to retrieve the content
+    :type cookies: dictionary
     :return content: content of the entire website page
     :rtype content: string
     """
@@ -242,7 +251,7 @@ def get_full_content_from_entry_link(logger, cache_disabled, sq, feed_link, entr
     if cache_disabled or (search_result is None):
         # Get the full article
         logger.debug('Article not found in SQLite, grabbing the content')
-        content = get_readable_content(logger, entry_link)
+        content = get_readable_content(logger, cookies, entry_link)
 
     # If cache is not disabled and search_result was empty and I have a content, store the content in SQLite
     if (not cache_disabled) and (search_result is None) and (content is not None):
@@ -284,7 +293,7 @@ def add_entry_to_new_feed(logger, fg, entry, content):
     return fg
 
 
-def get_readable_content(logger, link):
+def get_readable_content(logger, cookies, link):
     """
     Retrieves the full content of a website page given the link in the entry feed
 
@@ -292,34 +301,38 @@ def get_readable_content(logger, link):
     :type logger: logger object
     :param link: link in the entry feed
     :type link: string
+    :param cookies: cookies to use to retrieve the content 
+    :type cookies: dictionary
     :return content: full content
     :rtype content: string
     """
 
     logger.debug('Fetching full article for {0}'.format(link))
 
-    article_to_fetch = Article(
-        url=link,
-        keep_article_html=True,
-        browser_user_agent='Mozilla/5.0 (Macintosh; Intel Mac OS X 10.12; rv:49.0) Gecko/20100101 Firefox/49.0',
-        request_timeout=20)
-    try:
-        article_to_fetch.download()
-    except Exception as e:
-        logger.warning('Unable to download the article for link {0}, error: {1}'.format(link, e))
-        return None
-    else:
-        if not article_to_fetch.html:
-            logger.debug('HTML content is empty for link: {0}'.format(link))
+    # Use requests to retrieve the content so that we can pass cookies
+    with requests.session() as s:
+        headers = {'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10.12; rv:49.0) Gecko/20100101 Firefox/49.0'}
+        response = s.get(link, headers=headers, cookies=cookies, timeout=20)
+
+        article = Article(url=link, keep_article_html=True)
+        
+        try:
+            article.download(input_html=response.text)
+        except Exception as e:
+            logger.warning('Unable to download the article for link {0}, error: {1}'.format(link, e))
             return None
         else:
-            try:
-                article_to_fetch.parse()
-            except Exception as e:
-                logger.warning('Unable to parse the article for link {0}, error: {1}'.format(link, e))
+            if not article.html:
+                logger.debug('HTML content is empty for link: {0}'.format(link))
                 return None
             else:
-                return article_to_fetch.article_html
+                try:
+                    article.parse()
+                except Exception as e:
+                    logger.warning('Unable to parse the article for link {0}, error: {1}'.format(link, e))
+                    return None
+                else:
+                    return article.article_html
 
 
 if __name__ == '__main__':
@@ -353,7 +366,15 @@ if __name__ == '__main__':
         logger.debug('Reading configuration for {0}'.format(website))
         feed = config_data[website]['feed']
         logger.debug('Feed to parse: {0}'.format(feed))
+
+        if 'cookies' in config_data[website]:
+            cookies = config_data[website]['cookies']
+            logger.debug('Cookies: {0}'.format(cookies))
+        else:
+            cookies = dict()
+
         output_file = config_data[website]['output_file']
         logger.debug('Output file: {0}'.format(output_file))
 
-        generate_new_feed(logger, website, feed, output_file)
+
+        generate_new_feed(logger, website, feed, cache_disabled, cookies, output_file)

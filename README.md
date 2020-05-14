@@ -31,31 +31,26 @@ blasterfeed is relying on some other python modules.
 To install them
 
 ```bash
-pip install -r requirements.txt
+pip3 install -r requirements.txt
 ```
-
-requests>=2.6.0
-is to avoid the error
-
-```
-  File "/usr/local/lib/python2.7/dist-packages/requests/packages/urllib3/contrib/pyopenssl.py", line 70, in <module>
-    ssl.PROTOCOL_SSLv3: OpenSSL.SSL.SSLv3_METHOD,
-AttributeError: 'module' object has no attribute 'PROTOCOL_SSLv3'
-```
-
-Reference: [patch-pyopenssl-for-sslv3-issue](http://stackoverflow.com/questions/28987891/patch-pyopenssl-for-sslv3-issue)
 
 ## The config file
 
 The config file must be called config.yml and must be placed in the _config/_ directory.  
-For each feed you need to create a different section.  
-All the fields are mandatory.
+For each feed you need to create a different section.
 
 ### The structure
+
+`feed_name`: name of the feed. Mandatory.  
+`feed`: URL of the feed that you want to parse.  
+`output_file`: full path to the file where you want to save the generated feed. Mandatory.  
+`cookies`: list of cookies that you want to pass to the request. Certain websites are requiring some cookies to avoid the annoying GDPR pop-ups. Optional.
 
 ```
 feed_name
   feed: <url_of_the_feed>
+  cookies:
+    <cookie_name>: <cookies_value>
   output_file: <full_path_of_the_output_file>
 ```
 
@@ -68,6 +63,9 @@ AwesomeWebsite:
 
 GreatWebsite:
   feed: https://great-webiste.com/feed.xml
+  cookies:
+    A1S: 'zBfjc'
+    BX: 'KahjC'
   output_file: /var/www/rss/GreatWebsite.xml
 ```
 
@@ -75,7 +73,9 @@ GreatWebsite:
 
 After setting the config file, run
 
-`python3 blasterfeed3k.py`
+```
+python3 blasterfeed3k.py
+```
 
 Available parameters
 
@@ -165,26 +165,9 @@ To exit
 
 ## dateutil and timezone
 
-feedparser uses dateutil to parse the feed pubDate if it is a string.
+feedparser uses dateutil to parse the feed pubDate if it is a string.  
 Unfortunately dateutil doesn't support timezones and it fails with ValueError if the feed pubDate doesn't have one.
 To solve this issue, I have generated a dictionary with as much timezone as I could to use with dateutil, so I can 
-provide to feedparser a datetime object with timestamp.
+provide to feedparser a datetime object with timestamp.  
 To generate this dictionary I have used the script *generate_timezone.py* which is not called anywhere.
 The dictionary of the time zones is in *my_timezones.py* and it is imported into *blasterfeed3k.py*
-
-## Known issues
-
-If you get the following error fetching a full article
-
-```
-Traceback (most recent call last):
-  File "/usr/local/lib/python2.7/dist-packages/newspaper/images.py", line 119, in fetch_url
-    p.feed(new_data)
-  File "/usr/local/lib/python2.7/dist-packages/PIL/ImageFile.py", line 392, in feed
-    im.mode, d, a, im.decoderconfig
-  File "/usr/local/lib/python2.7/dist-packages/PIL/Image.py", line 413, in _getdecoder
-    raise IOError("decoder %s not available" % decoder_name)
-IOError: decoder jpeg not available
-```
-
-follow the steps provided here: [PIL/Pillow IOError: decoder jpeg not available](https://coderwall.com/p/faqccw/pil-pillow-ioerror-decoder-jpeg-not-available)
