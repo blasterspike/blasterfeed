@@ -1,5 +1,11 @@
 FROM alpine:latest
 
+COPY blasterfeed3k.py \
+     my_timezones.py \
+     requirements.txt \
+     sqlitecache.py \
+     /home/
+
 RUN apk add python3 \
             libxslt-dev \
             jpeg-dev && \
@@ -7,19 +13,11 @@ RUN apk add python3 \
             gcc \
             python3-dev \
             linux-headers \
-            musl-dev
-
-RUN mkdir /home/blasterfeed/
-COPY blasterfeed3k.py \
-     my_timezones.py \
-     requirements.txt \
-     sqlitecache.py \
-     /home/blasterfeed/
-
-RUN pip3 install -r /home/blasterfeed/requirements.txt
-
-# Clean up
-RUN apk del build-dependencies && \
+            musl-dev \
+            py3-pip && \
+    pip3 install -r /home/requirements.txt && \
+    # Clean up
+    apk del build-dependencies && \
     rm -rf /var/cache/apk/* /tmp/*
 
-ENTRYPOINT ["python3", "/home/blasterfeed/blasterfeed3k.py"]
+ENTRYPOINT ["python3", "/home/blasterfeed3k.py"]
