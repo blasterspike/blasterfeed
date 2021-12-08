@@ -356,7 +356,7 @@ if __name__ == '__main__':
 
     with open('{0}/config/config.yml'.format(os.path.dirname(__file__)), 'r') as config_file:
         try:
-            config_data = yaml.load(config_file)
+            config_data = yaml.load(config_file, yaml.SafeLoader)
         except yaml.YAMLError as exc:
             logger.error('Unable to read configuration file: {0}'.format(exc))
             sys.exit(1)
